@@ -15,7 +15,7 @@
 
 
 /*cd /mnt/c/Users/onari/Downloads/Cryptogram4
-gcc -lpthread main.c -o main
+gcc -lpthread Cryptogram4.c -o crypto4
 http://localhost:8000/secret/
 */
 struct ParseRequest {
@@ -50,6 +50,21 @@ void QuoteStructure(struct Quote **QuoteNode){
     (*QuoteNode)->Author = NULL;
     (*QuoteNode)->Phrase = NULL;
     (*QuoteNode)->nextQuote = NULL;
+}
+void FreeQuotes(){
+    struct Quote *currentNode = quoteListHead;
+    while (currentNode !=NULL)
+    {
+        struct Quote *freeNode = currentNode;
+        free(freeNode->Phrase);
+        free(freeNode->Author);
+        currentNode = currentNode->nextQuote;
+        free(freeNode);
+     
+
+    }
+    quoteListHead = NULL;
+     
 }
 
 
@@ -157,6 +172,7 @@ const char *getPuzzle(){
 
    if (QuoteEntries == 0) {
         LoadPuzzles();
+        
     }
     
     if (quoteListHead != NULL) {
@@ -184,6 +200,7 @@ void populatePlayerKey(char *PlayerEncryptionKey, int distance, char replacement
         if (PlayerEncryptionKey[i] == '\0') {
             PlayerEncryptionKey[i] = distance + 'A'; // Convert distance back to a character
             PlayerEncryptionKey[i + 1] = replacement;
+            printf("PlayerKey populate: %c%c",distance, replacement);
             break;
         }
     }
@@ -213,7 +230,9 @@ void initialization(){
         printf("Memory not allocated. \n");
         exit(0);
     }
-   
+    //ensuring its empty
+   pEncryptedString[0] = '\0';
+
     for (int i = 0; i < strlen(Puzzle);i++){
         //check if current character is a letter, then makes it upper case
         if (isalpha(Puzzle[i])){
@@ -238,9 +257,12 @@ void initialization(){
 
 bool isGameOver(){
 
-    printf("Encrypted: %s\n", pEncryptedString);
-    printf("Decrypted: ");
 
+    bool GameOver = true;
+    /*
+        I Think that this logic may need to be reworked 
+        we are just using this to check if the game 
+    */
     for (int i = 0; i < strlen(pEncryptedString); i++) {
         // Check if it's a letter
         if (isalpha(pEncryptedString[i])) {
@@ -249,24 +271,20 @@ bool isGameOver(){
             for (int j = 0; PlayerEntered[j] != '\0'; j += 2) {
                 // Check if the encrypted letter matches any in the player's key
                 if (PlayerEntered[j + 1] == pEncryptedString[i]) {
-                    printf("%c", PlayerEntered[j]); // Print the corresponding letter from the player's key
                     found = true;
-                    return true;
+                    
                 }
             }
             
             // If not found, print underscore
             if (!found) {
-                printf("_");
-                return false;
+                GameOver = false;
+                break;
             }
-        } else {
-            // Print non-letter characters as is
-            printf("%c", pEncryptedString[i]);
-        }
-
+        } 
     }
-    printf("\n");
+    
+    return GameOver;
 }
 
 void teardown(void){
@@ -342,56 +360,118 @@ int server(){
             printf("404 Not Found ");
             perror("Socket");
         }
-        
+         
         
       return Socket;
 
 }
-void handleGame(bool newPuzzle, char*Path){
-    char* move = "?move=";
-    if (newPuzzle = true){
-        getPuzzle();
-        //i think i also need to call display world but we'll see
-    }
-    char Move[2];
+
+
+void displayWorld(int cSocket){
+    
+    char display[1000];
+
+sprintf(display,"<html>"
+            "<body>"
+            "Encrypted: %s<br>"
+            "Decrypted: %s<br>"
+            "<form action=\"crypt\" method=\"GET\">"
+            "<input type=\"text\" name=\"move\" autofocus maxlength=\"2\">"
+            "</form>"
+            "</body>"
+            "</html>",
+            pEncryptedString,
+            PlayerEntered);
+
+    char *msg200 = "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=UTF-8 \r\n\r\n";
+    if ((send(cSocket, msg200, strlen(msg200), 0)) ==  -1){
+        perror("Error sending display response");
+        exit(0);
+    } // Send HTTP header
+    if((send(cSocket, display, strlen(display), 0)) == -1){
+         perror("Error sending display message");
+         exit(0);
+    } // Send HTML content
+    return;
+}
+
+
+
+void handleGame(char*Path, int cSocket){
+    char* move = "crypt?";
+    char* newPuzzle = "crypt";
+    bool hasQuestionMark;
+    char Move[3] = {'\0', '\0', '\0'};
     for (int i =0; Path[i] != '\0'; i++){
         if (strncmp(&Path[i], move, strlen(move)) == 0){
+            hasQuestionMark = true;
             printf("%s\n", move);
-            for (int i = 0; i < strlen(Path); i++){
-                if (Path[i] == '='){
-                    Move[0] = Path[i+1];
-                    Move[1] = Path[i+2];
-                }
+            for (int j = 0; j < strlen(Path); j++){
+                if (Path[j] == '='){
+                    Move[0] = Path[j+1];
+                    Move[1] = Path[j+2];
+                } 
             }
         }
+        else {
+            hasQuestionMark = false;
+            }
+
+        if ((strncmp(&Path[i], newPuzzle, strlen(newPuzzle)) == 0) && !(hasQuestionMark)){
+            printf("%s\n", newPuzzle);
+            getPuzzle();
+            displayWorld(cSocket);
+            return;
+        }
     }
-    Move[2] = '\0';
-    int distance = Move[0] - 'A';
-    char replacement = Move[1];
-    printf("Word: %d, %c\n",distance, replacement);
+    if(hasQuestionMark){
+        int distance = Move[0] - 'A';
+        char replacement = Move[1];
+    printf("Word: %d, %c, %s \n",distance, replacement, Move);
     populatePlayerKey(PlayerEntered,distance,replacement);
-    isGameOver();
+    }
+    
+    //since the print statements working i thinkn that populatePlayerKey is causing the seg fault
+    
+    //Newly added 
+    if (isGameOver()){
+        char *msg200 = "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=UTF-8 \r\n\r\n";
+        char gameOverPage[] = 
+           "<html><body>Congratulations! You solved it! <a href=\"crypto\">Another?</a></body></html>";
+
+            if((send(cSocket, msg200, strlen(msg200), 0)) == -1 ){
+                perror("Error sending gameOver response");
+                exit(0);
+            } // Send HTTP header
+            if((send(cSocket, gameOverPage, strlen(gameOverPage), 0)) == -1){
+                perror("Error sending gameOver message");
+                exit(0);
+            } // Send HTML content
+            teardown();
+
+            return;
+        //need to do the same as response but the actual path would just be the exitPage
+    } else {
+        displayWorld(cSocket);
+        return;
+    }
 
 }
-void checkUrl(char*Path){
-    char* crypt = "crypt";
+bool checkUrl(char*Path, int cSocket){
     char* crypto = "crypto";
-    
+    char* crypt = "crypt";
     for (int i =0; Path[i] != '\0'; i++){
         //check if the url starts with crypto then call handleGame
-        if (strncmp(&Path[i], crypto, strlen(crypto)) == 0) {
-            printf("%s\n", crypto);
-            handleGame(false, Path);
+        if ((strncmp(&Path[i], crypto, strlen(crypto)) == 0) || (strncmp(&Path[i], crypt, strlen(crypt)) == 0)) {
+            printf("Cryptogram");
+            handleGame(Path, cSocket);
+            return true;
         }
-        // Check if the Url contains crypt and no ? meaning that we create a new puzzle
-        if ((strncmp(&Path[i], crypt, strlen(crypt)) == 0) && !((strncmp(&Path[i], crypto, strlen(crypto)) == 0)) && !((strncmp(&Path[i], "?", 1) == 0))){
-            printf("%s\n", crypt);
-            handleGame(true,Path);
-        }
-        
-
     }
+    return false;
 }
+
+
 
 /*
     The response method 
@@ -403,11 +483,14 @@ void checkUrl(char*Path){
 
 */
 void response(char *Path, int cSocket){
+    //checking for crypto
+    if (checkUrl(Path, cSocket)){
+        return;
+    }
 
     
     int fd;
     ssize_t readFile;
-    int index =0;
     char actualPath[500];
     struct stat file_stat;
     sprintf(actualPath, "%s%s",filepath,Path);
@@ -518,6 +601,8 @@ int main(int argc, char *argv[]){
         {
             sin_size = sizeof(client_addr);
             LoadPuzzles();
+            initialization();
+
            if ((new_fd = accept(Clientsocket, (struct sockaddr *) &client_addr, &sin_size)) == -1){
                 printf("Socket: %d\n",new_fd);
                 perror("Accept");
@@ -539,6 +624,7 @@ int main(int argc, char *argv[]){
                 close(new_fd);
                 continue;
             }
+            FreeQuotes();
 
         }
 
